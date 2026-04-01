@@ -24,9 +24,11 @@ natsort
 pyrender
 moviepy
 librosa
-triangle==20220202
+triangle==20250106
 
 # for server
 flask
 waitress
+fastapi
+uvicorn[standard]
 # redis

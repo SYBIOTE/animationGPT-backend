@@ -62,19 +62,25 @@ class T2MBot:
 
         self.folder_name = ""
 
-    def generate_motion(self, input: str, id: str, method: str="fast"):
+    def infer_motion_tensors(self, input: str):
+        """
+        Run text-to-motion inference. Returns (joints, lengths, feats) where
+        joints is on the model device, lengths is int, feats is on model device.
+        """
         batch = {
-            "text": [ input ],
-            "length": [0]
+            "text": [input],
+            "length": [0],
         }
-
         outputs = self.model(batch, task=TASK)
-
-        # wrap result
         feats = outputs["feats"][0]
-        lengths = outputs["length"][0]
+        lengths_t = outputs["length"][0]
         joints = outputs["joints"][0]
-        
+        lengths = int(lengths_t.item() if hasattr(lengths_t, "item") else lengths_t)
+        return joints, lengths, feats
+
+    def generate_motion(self, input: str, id: str, method: str="fast"):
+        joints, lengths, feats = self.infer_motion_tensors(input)
+
         # 保存结果
 
         # 1. 创建文件，如果存在则删除该文件所有内容
@@ -86,14 +92,14 @@ class T2MBot:
 
         try:
             xyz = xyz.detach().cpu().numpy()
-        except:
+        except Exception:
             xyz = xyz.detach().numpy()
-            
+
         np.save(self.get_file_path(JOINTS_NAME), xyz)
 
         self.render_motion(
             joints,
-            feats.to('cpu').numpy(), 
+            feats.to('cpu').numpy(),
             method
         )
     

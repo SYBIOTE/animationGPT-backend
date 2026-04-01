@@ -1,102 +1,69 @@
-from enum import Enum
-from flask import Flask, request, send_file
-from pathlib import Path
+from flask import Flask, jsonify, request
 import logging
 
-from utils.translate import get_bot as get_translate_bot
-from utils.hash import hash_string_with_time
-from utils.file import FileKind
-from utils.npy2bvh import Joint2BVHConvertor
-
-from utils.cache.file_cache import FileCache
-
 from bot import T2MBot
-
-class LangKind(Enum):
-    EN = 'en'
-    CN = 'cn'
-
-VIDEO_TYPE = "video/mp4"
-BVH_TYPE = "application/bvh"
-
-use_cache = False
-
+from motion_json import DEFAULT_FPS, joints_to_motion_data
 
 app = Flask("animationGPT")
 with app.app_context():
     bot = T2MBot()
-    converter = Joint2BVHConvertor()
 
     logging.basicConfig(
-        filename='results/animation.log', 
+        filename='results/animation.log',
         format="%(asctime)s: [%(levelname)s] %(message)s ",
         level=logging.INFO
-    ) 
-    
-    translate_bot = get_translate_bot()
-
-    cache = FileCache("./cache", max_count=10)
+    )
 
 
-@app.route("/generate", methods=['POST'])
-def generate():
-    # 1. 输入 Prompt，并选择输入的语言
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"})
+
+
+@app.route("/v1/motion", methods=["POST"])
+def v1_motion():
+    """
+    JSON API compatible with nirvana-animate-saas MotionGenerateResponse.
+    Body: { "text": string, "duration"?: number, "seed"?: number, "cfg_scale"?: number }
+    """
+    data = request.get_json(silent=True) or {}
+    text = data.get("text")
+    if text is None or not str(text).strip():
+        return jsonify({"error": 'Invalid body: "text" (non-empty string) is required.'}), 400
+    text = str(text).strip()
+
+    duration = data.get("duration", 3.0)
     try:
-        prompt = request.json['prompt']
-        lang = LangKind(request.json['language'])
+        duration = float(duration)
+    except (TypeError, ValueError):
+        duration = 3.0
 
-        # print(prompt, lang)
-    except KeyError:
-        return "key parameter not found", 400
-    except ValueError:
-        return "the kind of language not supported", 400
-
-    # 3. 如果输入语言不为英文，则需要调用API翻译
-    if lang != LangKind.EN:
-        (flag, prompt) = translate_bot.translate(prompt)
-        print("result: ", flag, prompt)
-        if not flag:
-            return "translate error", 500
-        
-    logging.info("cur prompt: " + prompt)
-        
-    # 4. 通过hash算法将Prompt转换称为16进制，并存储起来
-    # Notice: 为了避免对同一示例生成时导致数据丢失的问题，生成id是配合时间戳
-    id = hash_string_with_time(prompt)
-    if use_cache:
-        if not cache.check(id):
-            bot.generate_motion(prompt, id)
-            cache.add(id)
-        else:
-            logging.info("cache hint!")
-    else:
-        bot.generate_motion(prompt, id)
-
-    # 5. 最后返回视频
-    path = FileKind.MP4.to_cache_path(id)
-    
-    return send_file(path,download_name=id, mimetype=VIDEO_TYPE)
-
-
-@app.route("/download", methods=['GET'])
-def download():
+    seed = data.get("seed", 42)
+    try:
+        seed = int(seed)
+    except (TypeError, ValueError):
+        seed = 42
 
     try:
-        id = request.args['id']
-    except KeyError:
-        return "key parameter not found", 400
-
-    # if not cache.check(id):
-    #     return "Session not found", 404
-
-    try:
-        npy_path = FileKind.NPY.to_cache_path(id)
-        bvh_path = FileKind.BVH.to_cache_path(id)
-        converter.convert(npy_path, bvh_path)
-
-        return send_file(bvh_path, download_name=id, mimetype=BVH_TYPE)
-    except:
-        return "Session not found", 404
+        joints, lengths, _feats = bot.infer_motion_tensors(text)
+        if lengths <= 0:
+            return jsonify({"error": "Model returned empty motion."}), 500
+        j = joints[:lengths].detach().cpu().numpy()
+        motion = joints_to_motion_data(j, lengths, fps=DEFAULT_FPS)
+        return jsonify(
+            {
+                "motion": motion,
+                "meta": {
+                    "text": text,
+                    "duration": duration,
+                    "seed": seed,
+                    "provider": "animationgpt",
+                },
+            }
+        )
+    except Exception as e:
+        logging.exception("v1/motion failed: %s", e)
+        return jsonify({"error": str(e)}), 500
 
 
 if __name__ == '__main__':
