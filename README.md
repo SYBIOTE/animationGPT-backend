@@ -1,19 +1,21 @@
 # AnimationGPT
 
-This project’s backend is derived from [MotionGPT](https://github.com/OpenMotionLab/MotionGPT).
+本项目后端在 [MotionGPT](https://github.com/OpenMotionLab/MotionGPT) 的基础之上修改而成的。
 
-## Setup
+## 使用配置
 
-### Base dependencies
+### 基础依赖
 
-Besides cloning the code from GitHub, to run the model you also need to download and install the following.
+除了从 Github 克隆的代码之外，若需要正常使用本模型，
+还需要下载和安装以下依赖文件。
 
-1. Install Python dependencies: `pip install -r requirements.txt`
-2. Download the model assets the project depends on
-3. Download the **HumanML3D** dataset  
-   Note: the upstream project uses the [HumanML3D](https://github.com/EricGuo5513/HumanML3D) dataset, but it only ships **`KIT_ML`**; that data must be prepared manually.
+1. 通过 `pip install -r requirement` 安装依赖
+2. 下载项目所依赖的相关模型
+3. 下载项目所需要的数据集 `Humanml3d`
+    > 需要注意的是原项目是使用 [HumanML3D](https://github.com/EricGuo5513/HumanML3D) 的数据集，
+    > 但是其只提供了数据集`KIT_ML`，而该数据需要手动处理
 
-The original project provides scripts to fetch dependencies; you can also download files manually from the linked sites.
+原项目也提供了下载相关依赖的脚本，当然也支持从相关网站上手动下载
 
 ```bash
 bash prepare/download_smpl_model.sh
@@ -23,69 +25,49 @@ bash prepare/download_t2m_evaluators.sh
 bash prepare/download_pretrained_models.sh
 ```
 
-- Dependency bundle: [Google Drive](https://drive.google.com/drive/folders/10s5HXSFqd6UTOkW2OMNc27KGmMLkVc2L)
-- Model weights: [Hugging Face](https://huggingface.co/OpenMotionLab)
+-   依赖文件：[Google Drive](https://drive.google.com/drive/folders/10s5HXSFqd6UTOkW2OMNc27KGmMLkVc2L)
+-   模型文件: [Huggingface](https://huggingface.co/OpenMotionLab)
 
-### Translation API
+### 翻译 API
 
-This project accepts **Chinese and English** input, but the LLM only accepts **English**, so Chinese prompts are sent to an external translation API.
+由于本项目同时支持中文与英文的输入，但是 LLM 只支持英文输入，因此本项目需要调用外部 API 将中文翻译成英文。
+目前本项目支持调用的 API 如下，
+如需使用翻译服务，请到对应官网申请密钥，
+然后复制[configs/translate.example.json](./configs/translate.example.json)，
+并删除`example`后缀，此后按照需求填写对应的 key 即可。
 
-Supported providers are listed below. To enable translation, copy [`configs/translate.example.json`](./configs/translate.example.json), remove the `example` suffix, and fill in the keys for the provider you use.
+|名称| kind| 所需密钥|
+|--|--|--|
+|[有道智云](https://ai.youdao.com/DOCSIRMA/html/trans/api/wbfy/index.html)|youdao |`appKey`, `appSecret` |
 
-| Name | `kind` | Credentials |
-|------|--------|-------------|
-| [Youdao AI Open Platform](https://ai.youdao.com/DOCSIRMA/html/trans/api/wbfy/index.html) | `youdao` | `appKey`, `appSecret` |
+> 注意：本项目运行时只能选择其中一种翻译服务
 
-Note: only **one** translation backend can be active at runtime.
+## OOP 封装
 
-## OOP wrapper
+为了方便代码的后续开发，本项目使用 OOP (Object-oriented Programming) 的思想对模型操作进行封装，结果为[`T2MBot`](./server/bot.py)对象。该对象在创建时，会经历以下初始化步骤。
 
-To make later development easier, model usage is wrapped in an OOP style as the [`T2MBot`](./server/bot.py) object. On construction it:
+1. 加载项目中的配置文件，并生成创建生成目录
+1. 设置`torch`种子并选择运算设备
+1. 依次加载`data_module`, `state_dict`构建模型对象
 
-1. Loads config and ensures output directories exist  
-2. Sets the `torch` seed and picks the compute device  
-3. Loads `data_module` and `state_dict` to build the model  
+此后，用户就可以调用`generate_motion`通过文本生成模型动作。
 
-After that, call `generate_motion` to generate motion from text.
+## 缓存机制
 
-## Caching
+为了防止用户对相同的句子重复生成，特别是对于我们提供了一些实例，
+我们引入了缓存的机制，当用户请求生成的句子已经生成过，
+服务端则直接返回结果，以此减少服务端的计算开销。
 
-To avoid regenerating the same prompts (especially for bundled examples), the server caches results: if a prompt was already generated, the stored output is returned to save compute.
+考虑到具体的业务量，服务端的缓存机制如下。
 
-Behavior:
+1. 服务端启动时，从缓存目录读取之前已经生成的结果 id 作为集合
+2. 当有新的生成请求时，首先将 prompt 通过哈希算法得到对应的 id
+3. 然后判断 id 在集合中是否存在
+    - 存在则直接返回生成结果
+    - 不存在则进行生成，并将该 id 保存到集合当中
+4. 当集合中结果的数量超过设置的最大限制，则会进行缓存淘汰
+    > 程序会随机删除 n% 最大数量的生成结果，兼顾效率和数据一致性的问题，
+    > 程序会先删除内存中的集合，再通过多线程删除 磁盘中的生成结果
 
-1. On startup, load previously generated result IDs from the cache directory into a set  
-2. For each new request, hash the prompt to an ID  
-3. If the ID is in the set → return the cached result; otherwise generate, then add the ID to the set  
-4. When the set exceeds the configured maximum, evict entries  
-   The implementation randomly removes a fraction of the cap to balance speed and consistency: it updates the in-memory set first, then deletes files on disk in a background thread  
-
-Observed on-disk size per generation is on the order of **~500 KB**; with a cap of **2000** generations, expect roughly **~1 GB** of disk usage.
-
-## JSON API (SaaS / HY-Motion–compatible)
-
-A **slim API-only extract** is maintained as the **`animationgpt-api`** repository (git submodule at repo root: same `mGPT` + configs + `POST /v1/motion`; no Gradio, BVH, or translation stack).
-
-For integration with **nirvana-animate-saas** (multi-provider motion), use either:
-
-### FastAPI (recommended, same style as HY-Motion)
-
-From the **animationGPT-backend** repo root:
-
-```bash
-python -m uvicorn api:app --host 0.0.0.0 --port 8082
-```
-
-- **`GET /health`** — `{ "status": "ok" }`
-- **`POST /v1/motion`** — body and response match HY-Motion’s JSON shape; `meta` includes `provider: "animationgpt"`.
-- Optional env: **`MOTION_FPS`** (default **20**), **`T2M_CACHE_FOLDER`**.
-
-### Flask (`server/main.py`)
-
-Same JSON surface as FastAPI: **`GET /health`** and **`POST /v1/motion`** on port 8082 (no MP4/BVH download routes).
-
----
-
-**Response shape:** `{ "motion": { rot6d, transl, keypoints3d, root_rotations_mat, num_frames, fps }, "meta": { text, duration, seed, provider } }` — same `motion` as HY-Motion; `fps` is typically **20** for HumanML3D.
-
-Set **`ANIMGPT_API_URL`** in the Next.js app to this service’s base URL (e.g. `http://localhost:8082`).
+通过观察可以服务端生成的文件大小总和再 500K 左右，
+如果将最大生成数量设置为 2000，会占用磁盘 1G 的空间大小。

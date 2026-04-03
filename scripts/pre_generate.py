@@ -12,10 +12,11 @@ def main(file_path: str, k: int=-1):
     if k == -1: k = len(prompts)
 
     for prompt in tqdm(prompts[0:k]):
-        requests.post(
-            "http://localhost:8082/v1/motion",
-            json={"text": prompt.strip()},
-        )
+        # 通过 requests 请求，生成
+        requests.post("http://localhost:8082/generate", json = {
+            "prompt": prompt,
+            "language": "en"
+        })
 
 
 # covert json to csv

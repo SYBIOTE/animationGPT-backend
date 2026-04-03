@@ -5,13 +5,14 @@ import pandas as pd
 from tqdm import tqdm
 from threading import Thread
 
-def call(prompt: str):
+def call():
+    
     start_t = datetime.now()
 
-    requests.post(
-        "http://localhost:8082/v1/motion",
-        json={"text": prompt},
-    )
+    requests.post("http://localhost:8082/generate", json = {
+            "prompt": prompt,
+            "language": "en"
+        })
 
     delta_t = (datetime.now() - start_t)
 
@@ -28,7 +29,7 @@ if __name__ == "__main__":
     # for prompt in tqdm(prompts[0:10]):
     threads = []
     for prompt in prompts[0:10]:
-        thread = Thread(target=call, args=(prompt,))
+        thread = Thread(target=call)
         thread.start()
         threads.append(thread)
 
