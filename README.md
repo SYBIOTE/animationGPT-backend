@@ -1,21 +1,19 @@
 # AnimationGPT
 
-本项目后端在 [MotionGPT](https://github.com/OpenMotionLab/MotionGPT) 的基础之上修改而成的。
+This project's backend is built upon [MotionGPT](https://github.com/OpenMotionLab/MotionGPT).
 
-## 使用配置
+## Setup
 
-### 基础依赖
+### Dependencies
 
-除了从 Github 克隆的代码之外，若需要正常使用本模型，
-还需要下载和安装以下依赖文件。
+In addition to cloning the code from GitHub, the following dependency files need to be downloaded and installed to use this model properly.
 
-1. 通过 `pip install -r requirement` 安装依赖
-2. 下载项目所依赖的相关模型
-3. 下载项目所需要的数据集 `Humanml3d`
-    > 需要注意的是原项目是使用 [HumanML3D](https://github.com/EricGuo5513/HumanML3D) 的数据集，
-    > 但是其只提供了数据集`KIT_ML`，而该数据需要手动处理
+1. Install dependencies via `pip install -r requirement`
+2. Download the required model files
+3. Download the `HumanML3D` dataset
+    > Note: the original project uses the [HumanML3D](https://github.com/EricGuo5513/HumanML3D) dataset, but it only provides the `KIT_ML` dataset, which requires manual processing.
 
-原项目也提供了下载相关依赖的脚本，当然也支持从相关网站上手动下载
+The original project also provides scripts for downloading the dependencies. You can also download them manually from the linked sites.
 
 ```bash
 bash prepare/download_smpl_model.sh
@@ -25,49 +23,45 @@ bash prepare/download_t2m_evaluators.sh
 bash prepare/download_pretrained_models.sh
 ```
 
--   依赖文件：[Google Drive](https://drive.google.com/drive/folders/10s5HXSFqd6UTOkW2OMNc27KGmMLkVc2L)
--   模型文件: [Huggingface](https://huggingface.co/OpenMotionLab)
+-   Dependency files: [Google Drive](https://drive.google.com/drive/folders/10s5HXSFqd6UTOkW2OMNc27KGmMLkVc2L)
+-   Model files: [Huggingface](https://huggingface.co/OpenMotionLab)
 
-### 翻译 API
+### Translation API
 
-由于本项目同时支持中文与英文的输入，但是 LLM 只支持英文输入，因此本项目需要调用外部 API 将中文翻译成英文。
-目前本项目支持调用的 API 如下，
-如需使用翻译服务，请到对应官网申请密钥，
-然后复制[configs/translate.example.json](./configs/translate.example.json)，
-并删除`example`后缀，此后按照需求填写对应的 key 即可。
+This project supports both Chinese and English input, but the LLM only accepts English. An external API is used to translate Chinese input into English.
+The currently supported APIs are listed below.
+To use the translation service, apply for an API key from the corresponding provider,
+then copy [configs/translate.example.json](./configs/translate.example.json)
+and remove the `example` suffix. Fill in the required keys accordingly.
 
-|名称| kind| 所需密钥|
+| Name | Kind | Required Keys |
 |--|--|--|
-|[有道智云](https://ai.youdao.com/DOCSIRMA/html/trans/api/wbfy/index.html)|youdao |`appKey`, `appSecret` |
+| [Youdao AI](https://ai.youdao.com/DOCSIRMA/html/trans/api/wbfy/index.html) | youdao | `appKey`, `appSecret` |
 
-> 注意：本项目运行时只能选择其中一种翻译服务
+> Note: only one translation service can be active at runtime.
 
-## OOP 封装
+## OOP Architecture
 
-为了方便代码的后续开发，本项目使用 OOP (Object-oriented Programming) 的思想对模型操作进行封装，结果为[`T2MBot`](./server/bot.py)对象。该对象在创建时，会经历以下初始化步骤。
+To facilitate future development, this project uses OOP (Object-Oriented Programming) to encapsulate model operations into the [`T2MBot`](./server/bot.py) object. When created, this object goes through the following initialization steps:
 
-1. 加载项目中的配置文件，并生成创建生成目录
-1. 设置`torch`种子并选择运算设备
-1. 依次加载`data_module`, `state_dict`构建模型对象
+1. Load configuration files and create output directories
+2. Set the `torch` seed and select the compute device
+3. Sequentially load `data_module` and `state_dict` to build the model
 
-此后，用户就可以调用`generate_motion`通过文本生成模型动作。
+After initialization, users can call `generate_motion` to generate motion from text.
 
-## 缓存机制
+## Caching
 
-为了防止用户对相同的句子重复生成，特别是对于我们提供了一些实例，
-我们引入了缓存的机制，当用户请求生成的句子已经生成过，
-服务端则直接返回结果，以此减少服务端的计算开销。
+To avoid redundant generation for identical prompts — especially for the example prompts we provide — a caching mechanism is used. When a previously generated prompt is requested again, the server returns the cached result directly, reducing computational overhead.
 
-考虑到具体的业务量，服务端的缓存机制如下。
+The caching strategy works as follows:
 
-1. 服务端启动时，从缓存目录读取之前已经生成的结果 id 作为集合
-2. 当有新的生成请求时，首先将 prompt 通过哈希算法得到对应的 id
-3. 然后判断 id 在集合中是否存在
-    - 存在则直接返回生成结果
-    - 不存在则进行生成，并将该 id 保存到集合当中
-4. 当集合中结果的数量超过设置的最大限制，则会进行缓存淘汰
-    > 程序会随机删除 n% 最大数量的生成结果，兼顾效率和数据一致性的问题，
-    > 程序会先删除内存中的集合，再通过多线程删除 磁盘中的生成结果
+1. On startup, the server reads previously generated result IDs from the cache directory into an in-memory set
+2. For each new generation request, the prompt is hashed to produce an ID
+3. The ID is checked against the set:
+    - If it exists, the cached result is returned immediately
+    - If not, the motion is generated and the ID is added to the set
+4. When the number of cached results exceeds a configured maximum, cache eviction is triggered
+    > The server randomly deletes n% of the maximum number of cached results. For efficiency and data consistency, it first removes entries from the in-memory set, then deletes the corresponding files from disk using multiple threads.
 
-通过观察可以服务端生成的文件大小总和再 500K 左右，
-如果将最大生成数量设置为 2000，会占用磁盘 1G 的空间大小。
+Based on observation, the total size of server-generated files is roughly 500 KB per result. Setting the maximum cache size to 2000 entries would consume approximately 1 GB of disk space.
